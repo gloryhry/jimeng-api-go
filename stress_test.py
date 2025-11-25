@@ -12,7 +12,9 @@ def run_request(args, request_id):
     
     payload = {
         "model": args.model,
-        "prompt": args.prompt
+        "prompt": args.prompt,
+        "ratio": "16:9",
+        "resolution": "2k"
     }
 
     if args.path.endswith("/edits"):

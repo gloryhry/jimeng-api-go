@@ -2,10 +2,10 @@ package consts
 
 // API基础URL
 const (
-	BaseURLCN           = "https://jimeng.jianying.com"
-	BaseURLUSCommerce   = "https://commerce.us.capcut.com"
-	BaseURLHKCommerce   = "https://commerce-api-sg.capcut.com"
-	BaseURLHK           = "https://mweb-api-sg.capcut.com"
+	BaseURLCN         = "https://jimeng.jianying.com"
+	BaseURLUSCommerce = "https://commerce.us.capcut.com"
+	BaseURLHKCommerce = "https://commerce-api-sg.capcut.com"
+	BaseURLHK         = "https://mweb-api-sg.capcut.com"
 )
 
 // 默认助手ID
@@ -57,9 +57,10 @@ var ImageModelMap = map[string]string{
 }
 
 var ImageModelMapUS = map[string]string{
-	"jimeng-4.0":  "high_aes_general_v40",
-	"jimeng-3.0":  "high_aes_general_v30l:general_v3.0_18b",
-	"nanobanana":  "external_model_gemini_flash_image_v25",
+	"jimeng-4.0":    "high_aes_general_v40",
+	"jimeng-3.0":    "high_aes_general_v30l:general_v3.0_18b",
+	"nanobanana":    "external_model_gemini_flash_image_v25",
+	"nanobananapro": "dreamina_image_lib_1",
 }
 
 // 视频模型映射
@@ -97,9 +98,9 @@ const (
 
 // ResolutionParams 分辨率参数
 type ResolutionParams struct {
-	Width          int `json:"width"`
-	Height         int `json:"height"`
-	Ratio          int `json:"ratio"`
+	Width          int    `json:"width"`
+	Height         int    `json:"height"`
+	Ratio          int    `json:"ratio"`
 	ResolutionType string `json:"resolution_type"`
 }
 

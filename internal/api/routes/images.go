@@ -148,6 +148,8 @@ func handleImageEdits(c *gin.Context) {
 		Prompt         interface{}   `json:"prompt"`
 		Size           string        `json:"size"`
 		Quality        string        `json:"quality"`
+		Ratio          string        `json:"ratio"`
+		Resolution     string        `json:"resolution"`
 		NegativePrompt string        `json:"negative_prompt"`
 		SampleStrength float64       `json:"sample_strength"`
 		ResponseFormat string        `json:"response_format"`
@@ -178,6 +180,8 @@ func handleImageEdits(c *gin.Context) {
 		reqBody.Prompt = c.PostForm("prompt")
 		reqBody.Size = c.PostForm("size")
 		reqBody.Quality = c.PostForm("quality")
+		reqBody.Ratio = c.PostForm("ratio")
+		reqBody.Resolution = c.PostForm("resolution")
 		reqBody.ResponseFormat = c.PostForm("response_format")
 		reqBody.SampleStrength = parseFloat(c.PostForm("sample_strength"))
 		reqBody.NegativePrompt = c.PostForm("negative_prompt")
@@ -197,6 +201,8 @@ func handleImageEdits(c *gin.Context) {
 		Prompt         interface{}
 		Size           string
 		Quality        string
+		Ratio          string
+		Resolution     string
 		NegativePrompt string
 		SampleStrength float64
 		ResponseFormat string
@@ -206,6 +212,8 @@ func handleImageEdits(c *gin.Context) {
 		Prompt:         reqBody.Prompt,
 		Size:           reqBody.Size,
 		Quality:        reqBody.Quality,
+		Ratio:          reqBody.Ratio,
+		Resolution:     reqBody.Resolution,
 		NegativePrompt: reqBody.NegativePrompt,
 		SampleStrength: reqBody.SampleStrength,
 		ResponseFormat: reqBody.ResponseFormat,
@@ -234,6 +242,8 @@ func mapOpenAIParams(body struct {
 	Prompt         interface{}
 	Size           string
 	Quality        string
+	Ratio          string
+	Resolution     string
 	NegativePrompt string
 	SampleStrength float64
 	ResponseFormat string
@@ -251,8 +261,14 @@ func mapOpenAIParams(body struct {
 	if body.NegativePrompt != "" {
 		prompt = fmt.Sprintf("%s negative_prompt: %s", prompt, body.NegativePrompt)
 	}
-	ratio := mapSizeToRatio(body.Size)
-	resolution := mapQualityToResolution(body.Quality)
+	ratio := body.Ratio
+	if ratio == "" {
+		ratio = mapSizeToRatio(body.Size)
+	}
+	resolution := body.Resolution
+	if resolution == "" {
+		resolution = mapQualityToResolution(body.Quality)
+	}
 	return struct {
 		Model          string
 		Prompt         string
