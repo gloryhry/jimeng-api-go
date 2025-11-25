@@ -8,6 +8,7 @@ import (
 	"github.com/gloryhry/jimeng-api-go/internal/api/routes"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/config"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
+	"github.com/gloryhry/jimeng-api-go/internal/pkg/proxy"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/server"
 )
 
@@ -32,6 +33,9 @@ func main() {
 
 	// 输出日志头部
 	logger.Header()
+
+	// 初始化代理配置
+	proxy.Setup()
 
 	logger.Info("<<<< jimeng free server >>>>")
 	logger.Info(fmt.Sprintf("Version: %s", version))
