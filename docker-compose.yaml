@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  jimeng-api:
+    build: .
+    container_name: jimeng-api
+    ports:
+      - "5100:5100"
+    volumes:
+      - ./logs:/app/logs
+      - ./tmp:/app/tmp
+      # Uncomment the following line if you want to use local configs without rebuilding
+      # - ./configs:/app/configs
+    environment:
+      - ENV=prod
+    restart: unless-stopped
