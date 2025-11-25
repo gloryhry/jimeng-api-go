@@ -9,6 +9,7 @@ import (
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/errors"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/poller"
+	"github.com/gloryhry/jimeng-api-go/internal/pkg/task"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/uploader"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/utils"
 )
@@ -26,6 +27,23 @@ type VideoOptions struct {
 
 // GenerateVideo 文生视频
 func GenerateVideo(model string, prompt string, opts *VideoOptions, refreshToken string) (string, error) {
+	tm := task.NewTaskManager()
+	result, err := tm.ExecuteTask(
+		func() (string, error) {
+			return SubmitVideoGeneration(model, prompt, opts, refreshToken)
+		},
+		func(taskID string) (interface{}, error) {
+			return PollVideoResult(taskID, refreshToken)
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return result.(string), nil
+}
+
+// SubmitVideoGeneration 提交视频生成任务
+func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refreshToken string) (string, error) {
 	if opts == nil {
 		opts = &VideoOptions{}
 	}
@@ -191,6 +209,11 @@ func GenerateVideo(model string, prompt string, opts *VideoOptions, refreshToken
 		return "", errors.ErrAPIVideoGenerationFailed("记录ID不存在")
 	}
 
+	return historyID, nil
+}
+
+// PollVideoResult 轮询视频生成结果
+func PollVideoResult(historyID string, refreshToken string) (string, error) {
 	logger.Info(fmt.Sprintf("视频生成任务已提交，history_id: %s，等待生成完成...", historyID))
 	time.Sleep(5 * time.Second)
 

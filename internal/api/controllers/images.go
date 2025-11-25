@@ -15,6 +15,7 @@ import (
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/errors"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/poller"
+	"github.com/gloryhry/jimeng-api-go/internal/pkg/task"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/uploader"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/utils"
 )
@@ -87,6 +88,23 @@ func GetImageModel(model string, isInternational bool) (string, error) {
 
 // GenerateImages 文生图
 func GenerateImages(model string, prompt string, opts *ImageOptions, refreshToken string) ([]string, error) {
+	tm := task.NewTaskManager()
+	result, err := tm.ExecuteTask(
+		func() (string, error) {
+			return SubmitImageGeneration(model, prompt, opts, refreshToken)
+		},
+		func(taskID string) (interface{}, error) {
+			return PollImageResult(taskID, refreshToken, 4)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return result.([]string), nil
+}
+
+// SubmitImageGeneration 提交文生图任务
+func SubmitImageGeneration(model string, prompt string, opts *ImageOptions, refreshToken string) (string, error) {
 	if opts == nil {
 		opts = &ImageOptions{}
 	}
@@ -94,22 +112,39 @@ func GenerateImages(model string, prompt string, opts *ImageOptions, refreshToke
 	region := ParseRegionFromToken(refreshToken)
 	mappedModel, err := GetImageModel(model, region.IsInternational)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 分辨率: %s 比例: %s 精细度: %.2f 智能比例: %v",
 		model, mappedModel, opts.Resolution, opts.Ratio, opts.SampleStrength, opts.IntelligentRatio))
 
-	return generateImagesInternal(mappedModel, model, prompt, opts, refreshToken, region)
+	return submitImagesInternal(mappedModel, model, prompt, opts, refreshToken, region)
 }
 
 // GenerateImageComposition 图生图
 func GenerateImageComposition(model string, prompt string, images []interface{}, opts *ImageOptions, refreshToken string) ([]string, error) {
+	tm := task.NewTaskManager()
+	result, err := tm.ExecuteTask(
+		func() (string, error) {
+			return SubmitImageComposition(model, prompt, images, opts, refreshToken)
+		},
+		func(taskID string) (interface{}, error) {
+			return PollImageResult(taskID, refreshToken, 1)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return result.([]string), nil
+}
+
+// SubmitImageComposition 提交图生图任务
+func SubmitImageComposition(model string, prompt string, images []interface{}, opts *ImageOptions, refreshToken string) (string, error) {
 	if len(images) == 0 {
-		return nil, errors.ErrAPIRequestParamsInvalid("至少需要提供1张图片")
+		return "", errors.ErrAPIRequestParamsInvalid("至少需要提供1张图片")
 	}
 	if len(images) > maxBlendImages {
-		return nil, errors.ErrAPIRequestParamsInvalid("最多支持10张图片")
+		return "", errors.ErrAPIRequestParamsInvalid("最多支持10张图片")
 	}
 	if opts == nil {
 		opts = &ImageOptions{}
@@ -119,11 +154,11 @@ func GenerateImageComposition(model string, prompt string, images []interface{},
 	region := ParseRegionFromToken(refreshToken)
 	mappedModel, err := GetImageModel(model, region.IsInternational)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	params, err := resolveResolutionForModel(model, opts)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 图生图功能 %d张图片 %dx%d 精细度: %.2f",
@@ -140,7 +175,7 @@ func GenerateImageComposition(model string, prompt string, images []interface{},
 	for idx, item := range images {
 		id, err := uploadImageSource(uploaderExec, item, refreshToken, region)
 		if err != nil {
-			return nil, errors.ErrAPIRequestFailed(fmt.Sprintf("图片 %d 上传失败: %v", idx+1, err))
+			return "", errors.ErrAPIRequestFailed(fmt.Sprintf("图片 %d 上传失败: %v", idx+1, err))
 		}
 		uploadIDs = append(uploadIDs, id)
 	}
@@ -184,31 +219,15 @@ func GenerateImageComposition(model string, prompt string, images []interface{},
 
 	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	data := mapValue(response, "aigc_data")
 	historyID := fmt.Sprintf("%v", data["history_record_id"])
 	if historyID == "" {
-		return nil, errors.ErrAPIImageGenerationFailed("记录ID不存在")
+		return "", errors.ErrAPIImageGenerationFailed("记录ID不存在")
 	}
 
-	finalData, pollResult, err := pollHistory(historyID, refreshToken, &poller.PollingOptions{
-		ExpectedItemCount: 1,
-		MaxPollCount:      900,
-		Type:              "image",
-	}, blendImageInfo())
-	if err != nil {
-		return nil, err
-	}
-	urls := utils.ExtractImageUrls(finalData["item_list"])
-	if len(urls) == 0 && len(sliceValue(finalData["item_list"])) > 0 {
-		return nil, errors.ErrAPIImageGenerationFailed(
-			fmt.Sprintf("图生图失败: item_list有 %d 个项目，但无法提取任何图片URL，所有item都缺少 image.large_images[0].image_url 字段",
-				len(sliceValue(finalData["item_list"]))),
-		)
-	}
-	logger.Info(fmt.Sprintf("图生图完成，生成 %d 张，耗时 %.1fs", len(urls), pollResult.ElapsedTime))
-	return urls, nil
+	return historyID, nil
 }
 
 // GenerateImageEdits 兼容 OpenAI 接口
@@ -220,10 +239,19 @@ func GenerateImageEdits(model string, prompt string, images []interface{}, opts 
 	return GenerateImageComposition(model, prompt, images, opts, refreshToken)
 }
 
-func generateImagesInternal(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) ([]string, error) {
+// SubmitImageEdits 提交编辑任务
+func SubmitImageEdits(model string, prompt string, images []interface{}, opts *ImageOptions, refreshToken string) (string, error) {
+	if opts == nil {
+		opts = &ImageOptions{}
+	}
+	ensureImageOptionDefaults(opts)
+	return SubmitImageComposition(model, prompt, images, opts, refreshToken)
+}
+
+func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) (string, error) {
 	params, err := resolveResolutionForModel(requestedModel, opts)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	logger.Info(fmt.Sprintf("生成参数: 分辨率=%s 比例=%s", opts.Resolution, opts.Ratio))
 
@@ -237,7 +265,7 @@ func generateImagesInternal(mappedModel, requestedModel, prompt string, opts *Im
 	}
 
 	if shouldUseMultiImage(requestedModel, prompt) {
-		return generateJimeng40MultiImages(mappedModel, requestedModel, prompt, opts, refreshToken, region)
+		return submitJimeng40MultiImages(mappedModel, requestedModel, prompt, opts, refreshToken, region)
 	}
 
 	componentID := utils.UUID(true)
@@ -283,16 +311,21 @@ func generateImagesInternal(mappedModel, requestedModel, prompt string, opts *Im
 
 	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	data := mapValue(response, "aigc_data")
 	historyID := fmt.Sprintf("%v", data["history_record_id"])
 	if historyID == "" {
-		return nil, errors.ErrAPIImageGenerationFailed("记录ID不存在")
+		return "", errors.ErrAPIImageGenerationFailed("记录ID不存在")
 	}
 
+	return historyID, nil
+}
+
+// PollImageResult 轮询图片生成结果
+func PollImageResult(historyID string, refreshToken string, expectedCount int) ([]string, error) {
 	finalData, pollResult, err := pollHistory(historyID, refreshToken, &poller.PollingOptions{
-		ExpectedItemCount: 4,
+		ExpectedItemCount: expectedCount,
 		MaxPollCount:      900,
 		Type:              "image",
 	}, standardImageInfo())
@@ -310,11 +343,11 @@ func generateImagesInternal(mappedModel, requestedModel, prompt string, opts *Im
 	return urls, nil
 }
 
-func generateJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) ([]string, error) {
+func submitJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) (string, error) {
 	targetCount := extractTargetCount(prompt)
 	params, err := resolveResolutionForModel(requestedModel, opts)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	componentID := utils.UUID(true)
 	submitID := utils.UUID(true)
@@ -361,31 +394,15 @@ func generateJimeng40MultiImages(mappedModel, requestedModel, prompt string, opt
 
 	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	data := mapValue(response, "aigc_data")
 	historyID := fmt.Sprintf("%v", data["history_record_id"])
 	if historyID == "" {
-		return nil, errors.ErrAPIImageGenerationFailed("记录ID不存在")
+		return "", errors.ErrAPIImageGenerationFailed("记录ID不存在")
 	}
 
-	finalData, pollResult, err := pollHistory(historyID, refreshToken, &poller.PollingOptions{
-		ExpectedItemCount: targetCount,
-		MaxPollCount:      600,
-		Type:              "image",
-	}, blendImageInfo())
-	if err != nil {
-		return nil, err
-	}
-	urls := utils.ExtractImageUrls(finalData["item_list"])
-	if len(urls) == 0 && len(sliceValue(finalData["item_list"])) > 0 {
-		return nil, errors.ErrAPIImageGenerationFailed(
-			fmt.Sprintf("多图生成失败: item_list有 %d 个项目，但无法提取任何图片URL，所有item都缺少 image.large_images[0].image_url 字段",
-				len(sliceValue(finalData["item_list"]))),
-		)
-	}
-	logger.Info(fmt.Sprintf("多图生成结果: %d/%d 张，耗时 %.1fs", len(urls), targetCount, pollResult.ElapsedTime))
-	return urls, nil
+	return historyID, nil
 }
 
 func ensureImageOptionDefaults(opts *ImageOptions) {
