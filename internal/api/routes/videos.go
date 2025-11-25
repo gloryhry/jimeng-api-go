@@ -91,7 +91,7 @@ func handleVideoGeneration(c *gin.Context) {
 	} else {
 		data = []map[string]string{{"url": videoURL, "revised_prompt": req.Prompt}}
 	}
-	c.JSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
+	c.PureJSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
 }
 
 func defaultString(value, def string) string {

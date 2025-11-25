@@ -58,7 +58,7 @@ func handleImageGenerations(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
+	c.PureJSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
 }
 
 func handleImageCompositions(c *gin.Context) {
@@ -133,7 +133,7 @@ func handleImageCompositions(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data, "input_images": len(images)})
+	c.PureJSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data, "input_images": len(images)})
 }
 
 func handleImageEdits(c *gin.Context) {
@@ -226,7 +226,7 @@ func handleImageEdits(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
+	c.PureJSON(http.StatusOK, gin.H{"created": utils.UnixTimestamp(), "data": data})
 }
 
 func mapOpenAIParams(body struct {
