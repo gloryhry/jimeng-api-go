@@ -90,10 +90,10 @@ const (
 
 // 轮询配置
 const (
-	MaxPollCount   = 120  // 最大轮询次数
+	MaxPollCount   = 40   // 最大轮询次数
 	PollInterval   = 5000 // 5秒（毫秒）
-	StableRounds   = 5    // 稳定轮次
-	TimeoutSeconds = 60   // 1分钟超时
+	StableRounds   = 3    // 稳定轮次
+	TimeoutSeconds = 180  // 3分钟超时
 )
 
 // ResolutionParams 分辨率参数
