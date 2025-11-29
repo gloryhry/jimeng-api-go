@@ -16,6 +16,22 @@ type RegionInfo struct {
 	IsCN            bool
 }
 
+func (r *RegionInfo) IsUSRegion() bool {
+	return r.IsUS
+}
+
+func (r *RegionInfo) IsHKRegion() bool {
+	return r.IsHK
+}
+
+func (r *RegionInfo) IsJPRegion() bool {
+	return r.IsJP
+}
+
+func (r *RegionInfo) IsSGRegion() bool {
+	return r.IsSG
+}
+
 // ParseRegionFromToken 从 token 中解析地区信息
 func ParseRegionFromToken(token string) *RegionInfo {
 	info := &RegionInfo{}

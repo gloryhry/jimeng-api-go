@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/gloryhry/jimeng-api-go/internal/api/builders"
 	"github.com/gloryhry/jimeng-api-go/internal/api/consts"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/errors"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
@@ -40,28 +40,8 @@ type ImageOptions struct {
 }
 
 // GetResolutionParams 返回分辨率配置信息
-func GetResolutionParams(resolution, ratio string) (consts.ResolutionParams, error) {
-	if resolution == "" {
-		resolution = "2k"
-	}
-	if ratio == "" {
-		ratio = "1:1"
-	}
-
-	resMap, ok := consts.ResolutionOptions[resolution]
-	if !ok {
-		return consts.ResolutionParams{}, errors.ErrAPIRequestParamsInvalid(
-			fmt.Sprintf("不支持的分辨率 \"%s\"。支持的分辨率: %s", resolution, strings.Join(sortedMapKeys(consts.ResolutionOptions), ", ")),
-		)
-	}
-
-	if params, ok := resMap[ratio]; ok {
-		return params, nil
-	}
-
-	return consts.ResolutionParams{}, errors.ErrAPIRequestParamsInvalid(
-		fmt.Sprintf("在 \"%s\" 分辨率下，不支持的比例 \"%s\"。支持的比例: %s", resolution, ratio, strings.Join(sortedResolutionKeys(resMap), ", ")),
-	)
+func GetResolutionParams(resolution, ratio string) (*builders.ResolutionResult, error) {
+	return builders.LookupResolution(resolution, ratio)
 }
 
 // GetImageModel 根据区域返回映射模型
@@ -115,10 +95,17 @@ func SubmitImageGeneration(model string, prompt string, opts *ImageOptions, refr
 		return "", err
 	}
 
+	// 使用 payload-builder 处理分辨率
+	resolutionResult, err := builders.ResolveResolution(model, region, opts.Resolution, opts.Ratio)
+	if err != nil {
+		return "", err
+	}
+	logResolutionInfo(model, resolutionResult, region)
+
 	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 分辨率: %s 比例: %s 精细度: %.2f 智能比例: %v",
 		model, mappedModel, opts.Resolution, opts.Ratio, opts.SampleStrength, opts.IntelligentRatio))
 
-	return submitImagesInternal(mappedModel, model, prompt, opts, refreshToken, region)
+	return submitImagesInternal(mappedModel, model, prompt, opts, refreshToken, region, resolutionResult)
 }
 
 // GenerateImageComposition 图生图
@@ -156,13 +143,16 @@ func SubmitImageComposition(model string, prompt string, images []interface{}, o
 	if err != nil {
 		return "", err
 	}
-	params, err := resolveResolutionForModel(model, opts)
+
+	// 使用 payload-builder 处理分辨率
+	resolutionResult, err := builders.ResolveResolution(model, region, opts.Resolution, opts.Ratio)
 	if err != nil {
 		return "", err
 	}
+	logResolutionInfo(model, resolutionResult, region)
 
 	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 图生图功能 %d张图片 %dx%d 精细度: %.2f",
-		model, mappedModel, len(images), params.Width, params.Height, opts.SampleStrength))
+		model, mappedModel, len(images), resolutionResult.Width, resolutionResult.Height, opts.SampleStrength))
 
 	if credit, err := ensureCredit(refreshToken); err != nil {
 		logger.Warn(fmt.Sprintf("获取积分失败: %v", err))
@@ -182,42 +172,72 @@ func SubmitImageComposition(model string, prompt string, images []interface{}, o
 
 	componentID := utils.UUID(true)
 	submitID := utils.UUID(true)
-	metrics := mustJSON(map[string]interface{}{
-		"promptSource":  "custom",
-		"generateCount": 1,
-		"enterFrom":     "click",
-		"generateId":    submitID,
-		"isRegenerate":  false,
+
+	// 使用 payload-builder 构建 core_param
+	coreParam := builders.BuildCoreParam(builders.BuildCoreParamOptions{
+		UserModel:        model,
+		Model:            mappedModel,
+		Prompt:           prompt,
+		ImageCount:       len(images),
+		SampleStrength:   opts.SampleStrength,
+		Resolution:       resolutionResult,
+		IntelligentRatio: opts.IntelligentRatio,
+		Mode:             builders.GenerateModeImg2Img,
 	})
 
-	coreParam := map[string]interface{}{
-		"type":              "",
-		"id":                utils.UUID(true),
-		"model":             mappedModel,
-		"prompt":            fmt.Sprintf("##%s", prompt),
-		"sample_strength":   opts.SampleStrength,
-		"image_ratio":       params.Ratio,
-		"large_image_info":  map[string]interface{}{"type": "", "id": utils.UUID(true), "height": params.Height, "width": params.Width, "resolution_type": params.ResolutionType},
-		"intelligent_ratio": opts.IntelligentRatio,
+	// 构建 metrics_extra 中的 abilityList
+	metricsAbilityList := make([]builders.Ability, len(uploadIDs))
+	for i := range uploadIDs {
+		metricsAbilityList[i] = builders.Ability{
+			AbilityName: "byte_edit",
+			Strength:    opts.SampleStrength,
+			Source: &struct {
+				ImageURL string `json:"imageUrl"`
+			}{
+				ImageURL: fmt.Sprintf("blob:https://dreamina.capcut.com/%s", utils.UUID(true)),
+			},
+		}
 	}
 
-	abilityList := buildBlendAbilities(uploadIDs, opts.SampleStrength)
-	component := buildBlendComponent(componentID, abilityList, coreParam)
-	draft := buildDraft(componentID, component)
+	// 使用 payload-builder 构建 metrics_extra
+	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
+		UserModel:      model,
+		RegionInfo:     region,
+		SubmitID:       submitID,
+		Scene:          builders.SceneTypeImageBasicGenerate,
+		ResolutionType: resolutionResult.ResolutionType,
+		AbilityList:    metricsAbilityList,
+	})
 
-	payload := map[string]interface{}{
-		"extend": map[string]interface{}{
-			"root_model": mappedModel,
-		},
-		"submit_id":     submitID,
-		"metrics_extra": metrics,
-		"draft_content": string(mustJSONBytes(draft)),
-		"http_common_info": map[string]interface{}{
-			"aid": GetAssistantID(region),
-		},
+	// 使用 payload-builder 构建 draft_content
+	abilityList := builders.BuildBlendAbilityList(uploadIDs, opts.SampleStrength)
+	promptPlaceholderInfoList := builders.BuildPromptPlaceholderList(len(uploadIDs))
+	posteditParam := map[string]interface{}{
+		"type":          "",
+		"id":            utils.UUID(true),
+		"generate_type": 0,
 	}
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
+	draftContent := builders.BuildDraftContent(builders.BuildDraftContentOptions{
+		ComponentID:               componentID,
+		GenerateType:              "blend",
+		CoreParam:                 coreParam,
+		AbilityList:               abilityList,
+		PromptPlaceholderInfoList: promptPlaceholderInfoList,
+		PosteditParam:             posteditParam,
+		ImageCount:                len(images),
+	})
+
+	// 使用 payload-builder 构建完整请求
+	requestData := builders.BuildGenerateRequest(builders.BuildGenerateRequestOptions{
+		Model:        mappedModel,
+		RegionInfo:   region,
+		SubmitID:     submitID,
+		DraftContent: draftContent,
+		MetricsExtra: metricsExtra,
+	})
+
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
 	if err != nil {
 		return "", err
 	}
@@ -248,11 +268,7 @@ func SubmitImageEdits(model string, prompt string, images []interface{}, opts *I
 	return SubmitImageComposition(model, prompt, images, opts, refreshToken)
 }
 
-func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) (string, error) {
-	params, err := resolveResolutionForModel(requestedModel, opts)
-	if err != nil {
-		return "", err
-	}
+func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo, resolutionResult *builders.ResolutionResult) (string, error) {
 	logger.Info(fmt.Sprintf("生成参数: 分辨率=%s 比例=%s", opts.Resolution, opts.Ratio))
 
 	if credit, err := ensureCredit(refreshToken); err != nil {
@@ -265,51 +281,53 @@ func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *Imag
 	}
 
 	if shouldUseMultiImage(requestedModel, prompt) {
-		return submitJimeng40MultiImages(mappedModel, requestedModel, prompt, opts, refreshToken, region)
+		return submitJimeng40MultiImages(mappedModel, requestedModel, prompt, opts, refreshToken, region, resolutionResult)
 	}
 
 	componentID := utils.UUID(true)
 	submitID := utils.UUID(true)
-	generateID := utils.UUID(true)
-	metrics := mustJSON(map[string]interface{}{
-		"promptSource":  "custom",
-		"generateCount": 1,
-		"enterFrom":     "click",
-		"generateId":    generateID,
-		"isRegenerate":  false,
+
+	// 使用 payload-builder 构建 core_param
+	coreParam := builders.BuildCoreParam(builders.BuildCoreParamOptions{
+		UserModel:        requestedModel,
+		Model:            mappedModel,
+		Prompt:           prompt,
+		NegativePrompt:   opts.NegativePrompt,
+		Seed:             randomSeed(),
+		SampleStrength:   opts.SampleStrength,
+		Resolution:       resolutionResult,
+		IntelligentRatio: opts.IntelligentRatio,
+		Mode:             builders.GenerateModeText2Img,
 	})
 
-	coreParam := map[string]interface{}{
-		"type":              "",
-		"id":                utils.UUID(true),
-		"model":             mappedModel,
-		"prompt":            prompt,
-		"negative_prompt":   opts.NegativePrompt,
-		"seed":              randomSeed(),
-		"sample_strength":   opts.SampleStrength,
-		"large_image_info":  map[string]interface{}{"type": "", "id": utils.UUID(true), "height": params.Height, "width": params.Width, "resolution_type": params.ResolutionType},
-		"intelligent_ratio": opts.IntelligentRatio,
-	}
-	if !opts.IntelligentRatio {
-		coreParam["image_ratio"] = params.Ratio
-	}
+	// 使用 payload-builder 构建 metrics_extra
+	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
+		UserModel:      requestedModel,
+		RegionInfo:     region,
+		SubmitID:       submitID,
+		Scene:          builders.SceneTypeImageBasicGenerate,
+		ResolutionType: resolutionResult.ResolutionType,
+		AbilityList:    []builders.Ability{},
+	})
 
-	component := buildGenerateComponent(componentID, coreParam)
-	draft := buildDraft(componentID, component)
+	// 使用 payload-builder 构建 draft_content
+	draftContent := builders.BuildDraftContent(builders.BuildDraftContentOptions{
+		ComponentID:  componentID,
+		GenerateType: "generate",
+		CoreParam:    coreParam,
+	})
 
-	payload := map[string]interface{}{
-		"extend": map[string]interface{}{
-			"root_model": mappedModel,
-		},
-		"submit_id":     submitID,
-		"metrics_extra": metrics,
-		"draft_content": string(mustJSONBytes(draft)),
-		"http_common_info": map[string]interface{}{
-			"aid": GetAssistantID(region),
-		},
-	}
+	// 使用 payload-builder 构建完整请求
+	requestData := builders.BuildGenerateRequest(builders.BuildGenerateRequestOptions{
+		Model:        mappedModel,
+		RegionInfo:   region,
+		SubmitID:     submitID,
+		DraftContent: draftContent,
+		MetricsExtra: metricsExtra,
+		AssistantID:  GetAssistantID(region),
+	})
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
 	if err != nil {
 		return "", err
 	}
@@ -343,56 +361,56 @@ func PollImageResult(historyID string, refreshToken string, expectedCount int) (
 	return urls, nil
 }
 
-func submitJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo) (string, error) {
+func submitJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo, resolutionResult *builders.ResolutionResult) (string, error) {
 	targetCount := extractTargetCount(prompt)
-	params, err := resolveResolutionForModel(requestedModel, opts)
-	if err != nil {
-		return "", err
-	}
+
+	logger.Info(fmt.Sprintf("使用 多图生成: %d张图片 %dx%d 精细度: %.2f", targetCount, resolutionResult.Width, resolutionResult.Height, opts.SampleStrength))
+
 	componentID := utils.UUID(true)
 	submitID := utils.UUID(true)
-	metrics := mustJSON(map[string]interface{}{
-		"templateId":      "",
-		"generateCount":   1,
-		"promptSource":    "custom",
-		"templateSource":  "",
-		"lastRequestId":   "",
-		"originRequestId": "",
+
+	// 使用 payload-builder 构建 core_param
+	coreParam := builders.BuildCoreParam(builders.BuildCoreParamOptions{
+		UserModel:        requestedModel,
+		Model:            mappedModel,
+		Prompt:           prompt,
+		NegativePrompt:   opts.NegativePrompt,
+		Seed:             randomSeed(),
+		SampleStrength:   opts.SampleStrength,
+		Resolution:       resolutionResult,
+		IntelligentRatio: opts.IntelligentRatio,
+		Mode:             builders.GenerateModeText2Img,
 	})
 
-	coreParam := map[string]interface{}{
-		"type":              "",
-		"id":                utils.UUID(true),
-		"model":             mappedModel,
-		"prompt":            prompt,
-		"negative_prompt":   opts.NegativePrompt,
-		"seed":              randomSeed(),
-		"sample_strength":   opts.SampleStrength,
-		"large_image_info":  map[string]interface{}{"type": "", "id": utils.UUID(true), "height": params.Height, "width": params.Width, "resolution_type": params.ResolutionType},
-		"intelligent_ratio": opts.IntelligentRatio,
-	}
-	if !opts.IntelligentRatio {
-		coreParam["image_ratio"] = params.Ratio
-	}
+	// 使用 payload-builder 构建 metrics_extra (多图模式)
+	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
+		UserModel:      requestedModel,
+		RegionInfo:     region,
+		SubmitID:       submitID,
+		Scene:          builders.SceneTypeImageMultiGenerate,
+		ResolutionType: resolutionResult.ResolutionType,
+		AbilityList:    []builders.Ability{},
+		IsMultiImage:   true,
+	})
 
-	logger.Info(fmt.Sprintf("使用 多图生成: %d张图片 %dx%d 精细度: %.2f", targetCount, params.Width, params.Height, opts.SampleStrength))
+	// 使用 payload-builder 构建 draft_content
+	draftContent := builders.BuildDraftContent(builders.BuildDraftContentOptions{
+		ComponentID:  componentID,
+		GenerateType: "generate",
+		CoreParam:    coreParam,
+	})
 
-	component := buildGenerateComponent(componentID, coreParam)
-	draft := buildDraft(componentID, component)
+	// 使用 payload-builder 构建完整请求
+	requestData := builders.BuildGenerateRequest(builders.BuildGenerateRequestOptions{
+		Model:        mappedModel,
+		RegionInfo:   region,
+		SubmitID:     submitID,
+		DraftContent: draftContent,
+		MetricsExtra: metricsExtra,
+		AssistantID:  GetAssistantID(region),
+	})
 
-	payload := map[string]interface{}{
-		"extend": map[string]interface{}{
-			"root_model": mappedModel,
-		},
-		"submit_id":     submitID,
-		"metrics_extra": metrics,
-		"draft_content": string(mustJSONBytes(draft)),
-		"http_common_info": map[string]interface{}{
-			"aid": GetAssistantID(region),
-		},
-	}
-
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
 	if err != nil {
 		return "", err
 	}
@@ -417,112 +435,23 @@ func ensureImageOptionDefaults(opts *ImageOptions) {
 	}
 }
 
-func resolveResolutionForModel(requestedModel string, opts *ImageOptions) (consts.ResolutionParams, error) {
-	if requestedModel == "nanobanana" {
-		logger.Warn("nanobanana模型当前固定使用1024x1024分辨率和2k的清晰度，您输入的参数将被忽略。")
-		return consts.ResolutionParams{
-			Width:          1024,
-			Height:         1024,
-			Ratio:          1,
-			ResolutionType: "2k",
-		}, nil
+func logResolutionInfo(model string, resolution *builders.ResolutionResult, region *RegionInfo) {
+	if !resolution.IsForced {
+		return
 	}
-	return GetResolutionParams(opts.Resolution, opts.Ratio)
-}
 
-func buildComponentMetadata() map[string]interface{} {
-	return map[string]interface{}{
-		"type":                     "",
-		"id":                       utils.UUID(true),
-		"created_platform":         3,
-		"created_platform_version": "",
-		"created_time_in_ms":       fmt.Sprintf("%d", time.Now().UnixMilli()),
-		"created_did":              "",
-	}
-}
-
-func buildBlendAbilities(uploadIDs []string, strength float64) []map[string]interface{} {
-	abilityList := make([]map[string]interface{}, 0, len(uploadIDs))
-	for _, uri := range uploadIDs {
-		abilityList = append(abilityList, map[string]interface{}{
-			"type":           "",
-			"id":             utils.UUID(true),
-			"name":           "byte_edit",
-			"image_uri_list": []string{uri},
-			"image_list": []map[string]interface{}{
-				{
-					"type":          "image",
-					"id":            utils.UUID(true),
-					"source_from":   "upload",
-					"platform_type": 1,
-					"name":          "",
-					"image_uri":     uri,
-					"width":         0,
-					"height":        0,
-					"format":        "",
-					"uri":           uri,
-				},
-			},
-			"strength": strength,
-		})
-	}
-	return abilityList
-}
-
-func buildBlendComponent(componentID string, abilityList []map[string]interface{}, coreParam map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type":          "image_base_component",
-		"id":            componentID,
-		"min_version":   consts.DraftMinVersion,
-		"aigc_mode":     "workbench",
-		"metadata":      buildComponentMetadata(),
-		"generate_type": "blend",
-		"abilities": map[string]interface{}{
-			"type": "",
-			"id":   utils.UUID(true),
-			"blend": map[string]interface{}{
-				"type":                         "",
-				"id":                           utils.UUID(true),
-				"min_features":                 []interface{}{},
-				"core_param":                   coreParam,
-				"ability_list":                 abilityList,
-				"prompt_placeholder_info_list": buildPlaceholderInfo(len(abilityList)),
-				"postedit_param":               map[string]interface{}{"type": "", "id": utils.UUID(true), "generate_type": 0},
-			},
-		},
-	}
-}
-
-func buildGenerateComponent(componentID string, coreParam map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type":          "image_base_component",
-		"id":            componentID,
-		"min_version":   consts.DraftMinVersion,
-		"aigc_mode":     "workbench",
-		"metadata":      buildComponentMetadata(),
-		"generate_type": "generate",
-		"abilities": map[string]interface{}{
-			"type": "",
-			"id":   utils.UUID(true),
-			"generate": map[string]interface{}{
-				"type":       "",
-				"id":         utils.UUID(true),
-				"core_param": coreParam,
-			},
-		},
-	}
-}
-
-func buildDraft(componentID string, component map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type":              "draft",
-		"id":                utils.UUID(true),
-		"min_version":       consts.DraftMinVersion,
-		"min_features":      []interface{}{},
-		"is_from_tsn":       true,
-		"version":           consts.DraftVersion,
-		"main_component_id": componentID,
-		"component_list":    []map[string]interface{}{component},
+	if model == "nanobanana" {
+		if region.IsUS {
+			logger.Warn("美区 nanobanana 模型固定使用1024x1024分辨率和2k的清晰度，比例固定为1:1。")
+		} else if region.IsHK || region.IsJP || region.IsSG {
+			regionName := "新加坡"
+			if region.IsHK {
+				regionName = "香港"
+			} else if region.IsJP {
+				regionName = "日本"
+			}
+			logger.Warn(fmt.Sprintf("%s站 nanobanana 模型固定使用1k清晰度。", regionName))
+		}
 	}
 }
 
@@ -608,69 +537,6 @@ func pollHistory(historyID, refreshToken string, pollOptions *poller.PollingOpti
 	return data, result, err
 }
 
-func standardImageInfo() map[string]interface{} {
-	return map[string]interface{}{
-		"width":  2048,
-		"height": 2048,
-		"format": "webp",
-		"image_scene_list": []map[string]interface{}{
-			sceneEntry("smart_crop", 360, 360, "smart_crop-w:360-h:360"),
-			sceneEntry("smart_crop", 480, 480, "smart_crop-w:480-h:480"),
-			sceneEntry("smart_crop", 720, 720, "smart_crop-w:720-h:720"),
-			sceneEntry("smart_crop", 720, 480, "smart_crop-w:720-h:480"),
-			sceneEntry("smart_crop", 360, 240, "smart_crop-w:360-h:240"),
-			sceneEntry("smart_crop", 240, 320, "smart_crop-w:240-h:320"),
-			sceneEntry("smart_crop", 480, 640, "smart_crop-w:480-h:640"),
-			sceneEntry("normal", 2400, 2400, "2400"),
-			sceneEntry("normal", 1080, 1080, "1080"),
-			sceneEntry("normal", 720, 720, "720"),
-			sceneEntry("normal", 480, 480, "480"),
-			sceneEntry("normal", 360, 360, "360"),
-		},
-	}
-}
-
-func blendImageInfo() map[string]interface{} {
-	return map[string]interface{}{
-		"width":  2048,
-		"height": 2048,
-		"format": "webp",
-		"image_scene_list": []map[string]interface{}{
-			sceneEntry("smart_crop", 360, 360, "smart_crop-w:360-h:360"),
-			sceneEntry("smart_crop", 480, 480, "smart_crop-w:480-h:480"),
-			sceneEntry("smart_crop", 720, 720, "smart_crop-w:720-h:720"),
-			sceneEntry("smart_crop", 720, 480, "smart_crop-w:720-h:480"),
-			sceneEntry("normal", 2400, 2400, "2400"),
-			sceneEntry("normal", 1080, 1080, "1080"),
-			sceneEntry("normal", 720, 720, "720"),
-			sceneEntry("normal", 480, 480, "480"),
-			sceneEntry("normal", 360, 360, "360"),
-		},
-	}
-}
-
-func sceneEntry(scene string, width, height int, key string) map[string]interface{} {
-	return map[string]interface{}{
-		"scene":    scene,
-		"width":    width,
-		"height":   height,
-		"uniq_key": key,
-		"format":   "webp",
-	}
-}
-
-func buildPlaceholderInfo(count int) []map[string]interface{} {
-	placeholders := make([]map[string]interface{}, 0, count)
-	for i := 0; i < count; i++ {
-		placeholders = append(placeholders, map[string]interface{}{
-			"type":          "",
-			"id":            utils.UUID(true),
-			"ability_index": i,
-		})
-	}
-	return placeholders
-}
-
 func randomSeed() int64 {
 	return int64(math.Floor(rand.Float64()*100000000) + 2500000000)
 }
@@ -701,6 +567,38 @@ func adaptRequestForUploader() uploader.RequestFunc {
 	}
 }
 
+func standardImageInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"width":  2048,
+		"height": 2048,
+		"format": "webp",
+		"image_scene_list": []map[string]interface{}{
+			sceneEntry("smart_crop", 360, 360, "smart_crop-w:360-h:360"),
+			sceneEntry("smart_crop", 480, 480, "smart_crop-w:480-h:480"),
+			sceneEntry("smart_crop", 720, 720, "smart_crop-w:720-h:720"),
+			sceneEntry("smart_crop", 720, 480, "smart_crop-w:720-h:480"),
+			sceneEntry("smart_crop", 360, 240, "smart_crop-w:360-h:240"),
+			sceneEntry("smart_crop", 240, 320, "smart_crop-w:240-h:320"),
+			sceneEntry("smart_crop", 480, 640, "smart_crop-w:480-h:640"),
+			sceneEntry("normal", 2400, 2400, "2400"),
+			sceneEntry("normal", 1080, 1080, "1080"),
+			sceneEntry("normal", 720, 720, "720"),
+			sceneEntry("normal", 480, 480, "480"),
+			sceneEntry("normal", 360, 360, "360"),
+		},
+	}
+}
+
+func sceneEntry(scene string, width, height int, key string) map[string]interface{} {
+	return map[string]interface{}{
+		"scene":    scene,
+		"width":    width,
+		"height":   height,
+		"uniq_key": key,
+		"format":   "webp",
+	}
+}
+
 func mustJSON(data map[string]interface{}) string {
 	return string(mustJSONBytes(data))
 }
@@ -718,24 +616,6 @@ func sliceValue(v interface{}) []interface{} {
 		return arr
 	}
 	return []interface{}{}
-}
-
-func sortedMapKeys(m map[string]map[string]consts.ResolutionParams) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedResolutionKeys(m map[string]consts.ResolutionParams) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func sortedModelKeys(m map[string]string) []string {

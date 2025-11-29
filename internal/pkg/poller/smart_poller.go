@@ -40,16 +40,16 @@ type PollingResult struct {
 
 // SmartPoller 智能轮询器
 type SmartPoller struct {
-	pollCount            int
-	startTime            time.Time
-	lastItemCount        int
+	pollCount             int
+	startTime             time.Time
+	lastItemCount         int
 	stableItemCountRounds int
-	maxPollCount         int
-	pollInterval         time.Duration
-	stableRounds         int
-	timeoutSeconds       int
-	expectedItemCount    int
-	itemType             string
+	maxPollCount          int
+	pollInterval          time.Duration
+	stableRounds          int
+	timeoutSeconds        int
+	expectedItemCount     int
+	itemType              string
 }
 
 // NewSmartPoller 创建智能轮询器
@@ -84,16 +84,16 @@ func NewSmartPoller(options *PollingOptions) *SmartPoller {
 	}
 
 	return &SmartPoller{
-		pollCount:            0,
-		startTime:            time.Now(),
-		lastItemCount:        0,
+		pollCount:             0,
+		startTime:             time.Now(),
+		lastItemCount:         0,
 		stableItemCountRounds: 0,
-		maxPollCount:         maxPollCount,
-		pollInterval:         time.Duration(pollInterval) * time.Millisecond,
-		stableRounds:         stableRounds,
-		timeoutSeconds:       timeoutSeconds,
-		expectedItemCount:    options.ExpectedItemCount,
-		itemType:             itemType,
+		maxPollCount:          maxPollCount,
+		pollInterval:          time.Duration(pollInterval) * time.Millisecond,
+		stableRounds:          stableRounds,
+		timeoutSeconds:        timeoutSeconds,
+		expectedItemCount:     options.ExpectedItemCount,
+		itemType:              itemType,
 	}
 }
 
@@ -227,6 +227,10 @@ func Poll[T any](p *SmartPoller, pollFunction func() (*PollingStatus, T, error),
 
 			// 处理超时情况
 			if p.pollCount >= p.maxPollCount || elapsed > float64(p.timeoutSeconds) {
+				if itemCount > 0 {
+					logger.Warn(fmt.Sprintf("退出轮询: %s, 但已有结果: %d个", reason, itemCount))
+					return result, data, nil
+				}
 				err := errors.HandlePollingTimeout(p.pollCount, p.maxPollCount, elapsed, status, itemCount, historyID)
 				if err != nil {
 					return result, zeroValue, err

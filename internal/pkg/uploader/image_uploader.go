@@ -3,6 +3,7 @@ package uploader
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/utils"
 )
 
-const uploaderUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+const uploaderUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
 
 // RequestFunc 封装的请求函数，避免包之间的循环引用
 type RequestFunc func(method, uri, refreshToken string, options *RequestOptions) (map[string]interface{}, error)
@@ -98,16 +99,20 @@ func UploadImageBuffer(
 		utils.GetAWSRegion(regionInfo),
 	)
 
+	logger.Info(fmt.Sprintf("申请上传 URL: %s", applyURL))
+
 	applyRespBody, err := doHTTP(requestConfig{
 		Method:      "GET",
 		URL:         applyURL,
-		Headers:     buildUploadHeaders(regionInfo, authorization, authHeaders, false),
+		Headers:     buildUploadHeaders(regionInfo, authorization, authHeaders, true),
 		Timeout:     45 * time.Second,
 		AllowNot200: false,
 	})
 	if err != nil {
+		logger.Error(fmt.Sprintf("申请上传请求失败: %v", err))
 		return "", err
 	}
+	logger.Debug(fmt.Sprintf("申请上传响应: %s", string(applyRespBody)))
 
 	applyResult := make(map[string]interface{})
 	if err := json.Unmarshal(applyRespBody, &applyResult); err != nil {
@@ -133,7 +138,11 @@ func UploadImageBuffer(
 		return "", errors.ErrFileUploadFailed("StoreInfos 为空")
 	}
 	storeInfo := mapValue(storeInfos[0], "")
-	uploadHost := toString(sliceValue(uploadAddress["UploadHosts"])[0])
+	uploadHosts := sliceValue(uploadAddress["UploadHosts"])
+	if len(uploadHosts) == 0 {
+		return "", errors.ErrFileUploadFailed("UploadHosts 为空")
+	}
+	uploadHost := toString(uploadHosts[0])
 	sessionKey := toString(uploadAddress["SessionKey"])
 	storeURI := toString(storeInfo["StoreUri"])
 	fileAuth := toString(storeInfo["Auth"])
@@ -159,6 +168,7 @@ func UploadImageBuffer(
 		Headers: mergeHeaders(buildUploadHeaders(regionInfo, "", nil, true), uploadHeaders),
 		Timeout: 60 * time.Second,
 	}); err != nil {
+		logger.Error(fmt.Sprintf("文件上传请求失败: %v", err))
 		return "", err
 	}
 
@@ -193,6 +203,7 @@ func UploadImageBuffer(
 		Timeout: 45 * time.Second,
 	})
 	if err != nil {
+		logger.Error(fmt.Sprintf("提交上传请求失败: %v", err))
 		return "", err
 	}
 
@@ -260,7 +271,18 @@ type requestConfig struct {
 }
 
 func doHTTP(cfg requestConfig) ([]byte, error) {
-	client := &http.Client{Timeout: cfg.Timeout}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+		ForceAttemptHTTP2: false,
+		TLSNextProto:      make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+	}
+	client := &http.Client{
+		Timeout:   cfg.Timeout,
+		Transport: transport,
+	}
 	req, err := http.NewRequest(cfg.Method, cfg.URL, cfg.Body)
 	if err != nil {
 		return nil, err
@@ -303,13 +325,19 @@ func sha256Hex(data []byte) string {
 
 func buildUploadHeaders(regionInfo *utils.RegionInfo, authorization string, extra map[string]string, includeUA bool) map[string]string {
 	headers := map[string]string{
-		"Accept":          "*/*",
-		"Accept-Language": "zh-CN,zh;q=0.9",
-		"Origin":          utils.GetOrigin(regionInfo),
-		"Referer":         utils.GetRefererPath(regionInfo, "/ai-tool/generate"),
+		"Accept":             "*/*",
+		"Accept-Language":    "zh-CN,zh;q=0.9",
+		"Origin":             utils.GetOrigin(regionInfo),
+		"Referer":            utils.GetRefererPath(regionInfo, "/ai-tool/generate"),
+		"sec-ch-ua":          `"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"`,
+		"sec-ch-ua-mobile":   "?0",
+		"sec-ch-ua-platform": `"Windows"`,
+		"sec-fetch-dest":     "empty",
+		"sec-fetch-mode":     "cors",
+		"sec-fetch-site":     "cross-site",
 	}
 	if includeUA {
-		headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+		headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
 	}
 	if authorization != "" {
 		headers["Authorization"] = authorization
