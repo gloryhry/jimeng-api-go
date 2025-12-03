@@ -234,6 +234,7 @@ type Ability struct {
 
 type BuildMetricsExtraOptions struct {
 	UserModel      string
+	Model          string // 映射后的模型名称
 	RegionInfo     RegionInfo
 	SubmitID       string
 	Scene          SceneType
@@ -248,7 +249,7 @@ func BuildMetricsExtra(options BuildMetricsExtraOptions) string {
 	sceneOption := map[string]interface{}{
 		"type":           "image",
 		"scene":          options.Scene,
-		"modelReqKey":    options.UserModel,
+		"modelReqKey":    options.Model, // 使用映射后的模型名称
 		"resolutionType": options.ResolutionType,
 		"abilityList":    options.AbilityList,
 		"reportParams": map[string]interface{}{

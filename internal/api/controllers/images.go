@@ -202,6 +202,7 @@ func SubmitImageComposition(model string, prompt string, images []interface{}, o
 	// 使用 payload-builder 构建 metrics_extra
 	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
 		UserModel:      model,
+		Model:          mappedModel,
 		RegionInfo:     region,
 		SubmitID:       submitID,
 		Scene:          builders.SceneTypeImageBasicGenerate,
@@ -303,6 +304,7 @@ func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *Imag
 	// 使用 payload-builder 构建 metrics_extra
 	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
 		UserModel:      requestedModel,
+		Model:          mappedModel,
 		RegionInfo:     region,
 		SubmitID:       submitID,
 		Scene:          builders.SceneTypeImageBasicGenerate,
@@ -385,6 +387,7 @@ func submitJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts 
 	// 使用 payload-builder 构建 metrics_extra (多图模式)
 	metricsExtra := builders.BuildMetricsExtra(builders.BuildMetricsExtraOptions{
 		UserModel:      requestedModel,
+		Model:          mappedModel,
 		RegionInfo:     region,
 		SubmitID:       submitID,
 		Scene:          builders.SceneTypeImageMultiGenerate,
