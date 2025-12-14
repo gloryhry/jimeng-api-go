@@ -133,7 +133,7 @@ func GetBenefitCount(userModel string, regionInfo RegionInfo, isMultiImage bool)
 	}
 
 	if regionKey == RegionKeyUS {
-		if userModel == "jimeng-4.0" || userModel == "jimeng-3.0" {
+		if userModel == "jimeng-4.5" || userModel == "jimeng-4.0" || userModel == "jimeng-3.0"  {
 			val := 4
 			return &val
 		}
