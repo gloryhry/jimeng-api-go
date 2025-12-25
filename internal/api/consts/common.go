@@ -47,6 +47,7 @@ const (
 // 图像模型映射
 var ImageModelMap = map[string]string{
 	"jimeng-4.5":     "high_aes_general_v40l",
+	"jimeng-4.1":     "high_aes_general_v41",
 	"jimeng-4.0":     "high_aes_general_v40",
 	"jimeng-3.1":     "high_aes_general_v30l_art_fangzhou:general_v3.0_18b",
 	"jimeng-3.0":     "high_aes_general_v30l:general_v3.0_18b",
@@ -59,6 +60,7 @@ var ImageModelMap = map[string]string{
 
 var ImageModelMapUS = map[string]string{
 	"jimeng-4.5":    "high_aes_general_v40l",
+	"jimeng-4.1":    "high_aes_general_v41",
 	"jimeng-4.0":    "high_aes_general_v40",
 	"jimeng-3.0":    "high_aes_general_v30l:general_v3.0_18b",
 	"nanobanana":    "external_model_gemini_flash_image_v25",

@@ -40,3 +40,8 @@ temp/
 
 # Config (if contains sensitive data)
 # configs/prod/
+
+
+server
+main
+.spec-workflow/
