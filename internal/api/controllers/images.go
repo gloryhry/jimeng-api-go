@@ -154,12 +154,6 @@ func SubmitImageComposition(model string, prompt string, images []interface{}, o
 	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 图生图功能 %d张图片 %dx%d 精细度: %.2f",
 		model, mappedModel, len(images), resolutionResult.Width, resolutionResult.Height, opts.SampleStrength))
 
-	if credit, err := ensureCredit(refreshToken); err != nil {
-		logger.Warn(fmt.Sprintf("获取积分失败: %v", err))
-	} else if credit.TotalCredit <= 0 {
-		_, _ = ReceiveCredit(refreshToken)
-	}
-
 	uploaderExec := adaptRequestForUploader()
 	uploadIDs := make([]string, 0, len(images))
 	for idx, item := range images {
@@ -271,15 +265,6 @@ func SubmitImageEdits(model string, prompt string, images []interface{}, opts *I
 
 func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *ImageOptions, refreshToken string, region *RegionInfo, resolutionResult *builders.ResolutionResult) (string, error) {
 	logger.Info(fmt.Sprintf("生成参数: 分辨率=%s 比例=%s", opts.Resolution, opts.Ratio))
-
-	if credit, err := ensureCredit(refreshToken); err != nil {
-		logger.Warn(fmt.Sprintf("获取积分失败: %v", err))
-	} else {
-		logger.Info(fmt.Sprintf("当前积分状态: 总计=%d, 赠送=%d, 购买=%d, VIP=%d", credit.TotalCredit, credit.GiftCredit, credit.PurchaseCredit, credit.VipCredit))
-		if credit.TotalCredit <= 0 {
-			_, _ = ReceiveCredit(refreshToken)
-		}
-	}
 
 	if shouldUseMultiImage(requestedModel, prompt) {
 		return submitJimeng40MultiImages(mappedModel, requestedModel, prompt, opts, refreshToken, region, resolutionResult)
