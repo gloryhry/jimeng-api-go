@@ -189,6 +189,7 @@ func Request(method string, uri string, refreshToken string, options *RequestOpt
 			"device_platform":         "web",
 			"region":                  region,
 			"da_version":              consts.DAVersion,
+			"os":                      "windows",
 			"web_component_open_flag": 1,
 			"web_version":             consts.WebVersion,
 			"aigc_features":           consts.AIGCFeatures,

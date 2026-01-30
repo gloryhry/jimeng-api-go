@@ -30,7 +30,7 @@ const (
 const PlatformCode = "7"
 
 // 版本代码
-const VersionCode = "1.0.0"
+const VersionCode = "8.4.0"
 
 // 默认模型
 const (
@@ -40,7 +40,7 @@ const (
 
 // 草稿版本
 const (
-	DraftVersion    = "3.3.3"
+	DraftVersion    = "3.3.8"
 	DraftMinVersion = "3.0.2"
 )
 

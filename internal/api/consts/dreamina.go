@@ -12,7 +12,7 @@ const (
 
 	// Web 配置
 	WebVersion   = "7.5.0"
-	DAVersion    = "3.3.2"
+	DAVersion    = "3.3.8"
 	AIGCFeatures = "app_lip_sync"
 )
 
