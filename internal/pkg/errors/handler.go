@@ -4,10 +4,63 @@ import (
 	stderrs "errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
 )
+
+// 可重试的网络错误码列表
+// 包含各类常见的网络错误：连接中断、超时、DNS解析失败等
+var retryableErrorCodes = []string{
+	"ECONNABORTED",   // 连接被中止
+	"ETIMEDOUT",      // 连接超时
+	"ECONNRESET",     // 连接被对端重置
+	"ENOTFOUND",      // DNS 解析失败 (主机未找到)
+	"ECONNREFUSED",   // 连接被拒绝
+	"EAI_AGAIN",      // DNS 临时失败
+	"EPIPE",          // 管道破裂（写入关闭的连接）
+	"ENETUNREACH",    // 网络不可达
+	"EHOSTUNREACH",   // 主机不可达
+}
+
+// IsRetryableError 判断是否为可重试的网络错误
+func IsRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// 检查是否包含可重试的错误码
+	for _, code := range retryableErrorCodes {
+		if strings.Contains(errStr, code) {
+			return true
+		}
+	}
+
+	// 检查常见的网络错误关键词
+	if strings.Contains(strings.ToLower(errStr), "timeout") ||
+		strings.Contains(strings.ToLower(errStr), "network") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "socket hang up") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(strings.ToLower(errStr), "i/o timeout") ||
+		strings.Contains(strings.ToLower(errStr), "no such host") {
+		return true
+	}
+
+	// 检查是否为 net.Error 类型
+	var netErr net.Error
+	if stderrs.As(err, &netErr) {
+		// 超时错误可重试
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	return false
+}
 
 // JimengErrorResponse 即梦API错误响应接口
 type JimengErrorResponse struct {
@@ -239,10 +292,21 @@ func WithRetry(operation func() error, options *ErrorHandlerOptions) error {
 			return err
 		}
 
-		if attempt < maxRetries {
+		// 判断是否为可重试的网络错误
+		isRetryable := IsRetryableError(err)
+
+		// 如果是可重试的错误且还有重试次数，则进行重试
+		if isRetryable && attempt < maxRetries {
 			logger.Warn(fmt.Sprintf("%s失败 (尝试 %d/%d): %v", context, attempt+1, maxRetries+1, err))
 			logger.Info(fmt.Sprintf("%.0f秒后重试...", retryDelay.Seconds()))
 			time.Sleep(retryDelay)
+			continue
+		}
+
+		// 不可重试的错误或已达到最大重试次数，直接退出循环
+		if !isRetryable {
+			logger.Warn(fmt.Sprintf("%s发生不可重试的错误: %v", context, err))
+			break
 		}
 	}
 

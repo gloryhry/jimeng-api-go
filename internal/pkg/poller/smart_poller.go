@@ -196,6 +196,15 @@ func Poll[T any](p *SmartPoller, pollFunction func() (*PollingStatus, T, error),
 		// 执行轮询函数
 		pollingStatus, data, err := pollFunction()
 		if err != nil {
+			// 判断是否为可重试的网络错误
+			if errors.IsRetryableError(err) && p.pollCount < p.maxPollCount {
+				logger.Warn(fmt.Sprintf("轮询过程中发生可重试的网络错误: %v", err))
+				// 网络错误后等待较长时间再重试
+				time.Sleep(p.pollInterval)
+				continue
+			}
+			// 不可重试的错误直接返回
+			logger.Error(fmt.Sprintf("轮询过程中发生不可恢复的错误: %v", err))
 			return nil, zeroValue, err
 		}
 
