@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -53,12 +55,79 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 	if strings.TrimSpace(opts.Resolution) == "" {
 		opts.Resolution = "720p"
 	}
-	if opts.Duration != 10 {
-		opts.Duration = 5
-	}
 	region := ParseRegionFromToken(refreshToken)
-	mappedModel := getVideoModel(model)
-	logger.Info(fmt.Sprintf("开始生成视频，模型: %s -> %s", model, mappedModel))
+	mappedModel := getVideoModel(model, region)
+
+	// 判断模型类型
+	isVeo3 := strings.Contains(mappedModel, "veo3")
+	isSora2 := strings.Contains(mappedModel, "sora2")
+	is35Pro := strings.Contains(mappedModel, "3.5_pro")
+	is40 := strings.Contains(mappedModel, "40") || strings.Contains(mappedModel, "seedance_40")
+	// 只有 video-3.0 和 video-3.0-fast 支持 resolution 参数（3.0-pro 和 3.5-pro 不支持）
+	supportsResolution := (strings.Contains(mappedModel, "vgfm_3.0") || strings.Contains(mappedModel, "vgfm_3.0_fast")) && !strings.Contains(mappedModel, "_pro")
+
+	// 计算实际时长
+	var durationMS int
+	var actualDuration int
+	if isVeo3 {
+		// VEO3 模型固定 8 秒
+		durationMS = 8000
+		actualDuration = 8
+	} else if isSora2 {
+		// Sora2 模型支持 4/8/12 秒
+		switch opts.Duration {
+		case 12:
+			durationMS = 12000
+			actualDuration = 12
+		case 8:
+			durationMS = 8000
+			actualDuration = 8
+		default:
+			durationMS = 4000
+			actualDuration = 4
+		}
+	} else if is35Pro {
+		// 3.5-pro 模型支持 5/10/12 秒
+		switch opts.Duration {
+		case 12:
+			durationMS = 12000
+			actualDuration = 12
+		case 10:
+			durationMS = 10000
+			actualDuration = 10
+		default:
+			durationMS = 5000
+			actualDuration = 5
+		}
+	} else if is40 {
+		// 4.0 模型支持 5/10/15 秒
+		switch opts.Duration {
+		case 15:
+			durationMS = 15000
+			actualDuration = 15
+		case 10:
+			durationMS = 10000
+			actualDuration = 10
+		default:
+			durationMS = 5000
+			actualDuration = 5
+		}
+	} else {
+		// 其他模型支持 5/10 秒
+		if opts.Duration == 10 {
+			durationMS = 10000
+			actualDuration = 10
+		} else {
+			durationMS = 5000
+			actualDuration = 5
+		}
+	}
+
+	resolutionStr := "不支持"
+	if supportsResolution {
+		resolutionStr = opts.Resolution
+	}
+	logger.Info(fmt.Sprintf("使用模型: %s 映射模型: %s 比例: %s 分辨率: %s 时长: %ds", model, mappedModel, opts.Ratio, resolutionStr, actualDuration))
 
 	credit, err := ensureCredit(refreshToken)
 	if err != nil {
@@ -98,41 +167,63 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 		endFrame = buildVideoFrame(uploadIDs[1])
 	}
 
-	durationMS := 5000
-	if opts.Duration == 10 {
-		durationMS = 10000
+	// 构建 genInputs
+	genInput := map[string]interface{}{
+		"type":              "",
+		"id":                utils.UUID(true),
+		"min_version":       "3.0.5",
+		"prompt":            prompt,
+		"video_mode":        2,
+		"fps":               24,
+		"duration_ms":       durationMS,
+		"first_frame_image": firstFrame,
+		"end_frame_image":   endFrame,
+		"idip_meta_list":    []interface{}{},
 	}
-
-	genInputs := []map[string]interface{}{
-		{
-			"type":              "",
-			"id":                utils.UUID(true),
-			"min_version":       "3.0.5",
-			"prompt":            prompt,
-			"video_mode":        2,
-			"fps":               24,
-			"duration_ms":       durationMS,
-			"resolution":        opts.Resolution,
-			"first_frame_image": firstFrame,
-			"end_frame_image":   endFrame,
-			"idip_meta_list":    []interface{}{},
-		},
+	// 只有支持的模型才传递 resolution
+	if supportsResolution {
+		genInput["resolution"] = opts.Resolution
 	}
+	genInputs := []map[string]interface{}{genInput}
 
 	componentID := utils.UUID(true)
+	originSubmitID := utils.UUID(true)
+
+	// 构建 sceneOption
+	sceneOption := map[string]interface{}{
+		"type":          "video",
+		"scene":         "BasicVideoGenerateButton",
+		"modelReqKey":   mappedModel,
+		"videoDuration": actualDuration,
+		"reportParams": map[string]interface{}{
+			"enterSource":                     "generate",
+			"vipSource":                       "generate",
+			"extraVipFunctionKey":             mappedModel,
+			"useVipFunctionDetailsReporterHoc": true,
+		},
+	}
+	if supportsResolution {
+		sceneOption["resolution"] = opts.Resolution
+		sceneOption["reportParams"].(map[string]interface{})["extraVipFunctionKey"] = fmt.Sprintf("%s-%s", mappedModel, opts.Resolution)
+	}
+
+	sceneOptionsJSON, _ := json.Marshal([]map[string]interface{}{sceneOption})
 	metrics := mustJSON(map[string]interface{}{
 		"promptSource":   "custom",
 		"isDefaultSeed":  1,
-		"originSubmitId": utils.UUID(true),
+		"originSubmitId": originSubmitID,
 		"isRegenerate":   false,
 		"enterFrom":      "click",
 		"functionMode":   "first_last_frames",
+		"sceneOptions":   string(sceneOptionsJSON),
 	})
 
 	draft := map[string]interface{}{
 		"type":              "draft",
 		"id":                utils.UUID(true),
 		"min_version":       "3.0.5",
+		"min_features":      []interface{}{},
+		"is_from_tsn":       true,
 		"version":           consts.DraftVersion,
 		"main_component_id": componentID,
 		"component_list": []map[string]interface{}{
@@ -143,10 +234,12 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 				"aigc_mode":     "workbench",
 				"generate_type": "gen_video",
 				"metadata": map[string]interface{}{
-					"type":               "",
-					"id":                 utils.UUID(true),
-					"created_platform":   3,
-					"created_time_in_ms": fmt.Sprintf("%d", time.Now().UnixMilli()),
+					"type":                     "",
+					"id":                       utils.UUID(true),
+					"created_platform":         3,
+					"created_platform_version": "",
+					"created_time_in_ms":       fmt.Sprintf("%d", time.Now().UnixMilli()),
+					"created_did":              "",
 				},
 				"abilities": map[string]interface{}{
 					"type": "",
@@ -170,23 +263,21 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 		},
 	}
 
-	rootModel := mappedModel
-	if endFrame != nil {
-		rootModel = consts.VideoModelMap["jimeng-video-3.0"]
-	}
+	// 始终使用映射后的 model 作为 root_model
+	benefitType := getVideoBenefitType(mappedModel)
 
 	payload := map[string]interface{}{
 		"extend": map[string]interface{}{
-			"root_model": rootModel,
+			"root_model": mappedModel,
 			"m_video_commerce_info": map[string]interface{}{
-				"benefit_type":      "basic_video_operation_vgfm_v_three",
+				"benefit_type":      benefitType,
 				"resource_id":       "generate_video",
 				"resource_id_type":  "str",
 				"resource_sub_type": "aigc",
 			},
 			"m_video_commerce_info_list": []map[string]interface{}{
 				{
-					"benefit_type":      "basic_video_operation_vgfm_v_three",
+					"benefit_type":      benefitType,
 					"resource_id":       "generate_video",
 					"resource_id_type":  "str",
 					"resource_sub_type": "aigc",
@@ -221,11 +312,25 @@ func PollVideoResult(historyID string, refreshToken string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// 调试日志：输出完整的 finalData
+	finalDataJSON, _ := json.Marshal(finalData)
+	logger.Info(fmt.Sprintf("轮询结果 finalData: %s", string(finalDataJSON)))
+
 	items := sliceValue(finalData["item_list"])
+	logger.Info(fmt.Sprintf("items 数量: %d", len(items)))
+
 	if len(items) == 0 {
 		return "", errors.ErrAPIVideoGenerationFailed("生成结果为空")
 	}
+
+	// 调试日志：输出 items[0] 的内容
+	itemJSON, _ := json.Marshal(items[0])
+	logger.Info(fmt.Sprintf("items[0] 内容: %s", string(itemJSON)))
+
 	videoURL := utils.ExtractVideoUrl(items[0])
+	logger.Info(fmt.Sprintf("提取的视频URL: %s", videoURL))
+
 	if videoURL == "" {
 		return "", errors.ErrAPIVideoGenerationFailed("未能提取视频链接")
 	}
@@ -233,14 +338,62 @@ func PollVideoResult(historyID string, refreshToken string) (string, error) {
 	return videoURL, nil
 }
 
-func getVideoModel(model string) string {
+// getVideoModel 根据区域获取视频模型映射
+func getVideoModel(model string, region *RegionInfo) string {
 	if model == "" {
 		model = defaultVideoModel
 	}
-	if mapped, ok := consts.VideoModelMap[model]; ok {
+	// 根据区域选择不同的模型映射
+	var modelMap map[string]string
+	if region.IsUS {
+		modelMap = consts.VideoModelMapUS
+	} else if region.IsHK || region.IsJP || region.IsSG {
+		modelMap = consts.VideoModelMapAsia
+	} else {
+		modelMap = consts.VideoModelMap
+	}
+	if mapped, ok := modelMap[model]; ok {
 		return mapped
 	}
+	// 如果在当前区域映射中找不到，尝试使用默认模型
+	if mapped, ok := modelMap[defaultVideoModel]; ok {
+		return mapped
+	}
+	// 最后回退到全局默认
 	return consts.VideoModelMap[defaultVideoModel]
+}
+
+// getVideoBenefitType 根据模型获取扣费类型
+func getVideoBenefitType(model string) string {
+	// veo3.1 模型 (需先于 veo3 检查)
+	if strings.Contains(model, "veo3.1") {
+		return "generate_video_veo3.1"
+	}
+	// veo3 模型
+	if strings.Contains(model, "veo3") {
+		return "generate_video_veo3"
+	}
+	// sora2 模型
+	if strings.Contains(model, "sora2") {
+		return "generate_video_sora2"
+	}
+	// 4.0 pro 模型 (seedance_40_pro)
+	if strings.Contains(model, "40_pro") || strings.Contains(model, "seedance_40_pro") {
+		return "dreamina_video_seedance_20_pro"
+	}
+	// 4.0 模型 (seedance_40)
+	if strings.Contains(model, "40") || strings.Contains(model, "seedance_40") {
+		return "dreamina_video_seedance_20"
+	}
+	// 3.5 pro 模型
+	if strings.Contains(model, "3.5_pro") {
+		return "dreamina_video_seedance_15_pro"
+	}
+	// 3.5 模型
+	if strings.Contains(model, "3.5") {
+		return "dreamina_video_seedance_15"
+	}
+	return "basic_video_operation_vgfm_v_three"
 }
 
 func buildVideoFrame(uri string) map[string]interface{} {
@@ -265,6 +418,9 @@ func pollVideoHistory(historyID string, refreshToken string) (map[string]interfa
 		TimeoutSeconds:    1200,
 	})
 
+	// 视频URL正则匹配模式
+	videoURLPattern := regexp.MustCompile(`https://v[0-9]+-artist\.vlabvod\.com/[^"\s]+`)
+
 	result, data, err := poller.Poll(smartPoller, func() (*poller.PollingStatus, map[string]interface{}, error) {
 		response, err := Request("POST", "/mweb/v1/get_history_by_ids", refreshToken, &RequestOptions{
 			Body: map[string]interface{}{"history_ids": []string{historyID}},
@@ -272,18 +428,53 @@ func pollVideoHistory(historyID string, refreshToken string) (map[string]interfa
 		if err != nil {
 			return nil, nil, err
 		}
-		task := mapValue(response, historyID)
-		status := int(numberValue(task["status"]))
-		failCode := fmt.Sprintf("%v", task["fail_code"])
-		items := sliceValue(task["item_list"])
-		finishTime := int64(numberValue(mapValue(task, "task")["finish_time"]))
+
+		// 尝试直接从响应中正则匹配视频URL
+		responseBytes, _ := json.Marshal(response)
+		if match := videoURLPattern.FindString(string(responseBytes)); match != "" {
+			logger.Info(fmt.Sprintf("从API响应中直接提取到视频URL: %s", match))
+			return &poller.PollingStatus{
+				Status:    10, // SUCCESS
+				ItemCount: 1,
+				HistoryID: historyID,
+			}, map[string]interface{}{
+				"status": 10,
+				"item_list": []interface{}{
+					map[string]interface{}{
+						"video": map[string]interface{}{
+							"transcoded_video": map[string]interface{}{
+								"origin": map[string]interface{}{
+									"video_url": match,
+								},
+							},
+						},
+					},
+				},
+			}, nil
+		}
+
+		taskData := mapValue(response, historyID)
+		// 检查是否有该 history_id 的数据
+		if len(taskData) == 0 {
+			logger.Warn(fmt.Sprintf("API未返回历史记录，historyId: %s，继续等待...", historyID))
+			return &poller.PollingStatus{
+				Status:    20, // PROCESSING
+				ItemCount: 0,
+				HistoryID: historyID,
+			}, map[string]interface{}{"status": 20, "item_list": []interface{}{}}, nil
+		}
+
+		status := int(numberValue(taskData["status"]))
+		failCode := fmt.Sprintf("%v", taskData["fail_code"])
+		items := sliceValue(taskData["item_list"])
+		finishTime := int64(numberValue(mapValue(taskData, "task")["finish_time"]))
 		return &poller.PollingStatus{
 			Status:     status,
 			FailCode:   failCode,
 			ItemCount:  len(items),
 			FinishTime: finishTime,
 			HistoryID:  historyID,
-		}, task, nil
+		}, taskData, nil
 	}, historyID)
 	if err != nil {
 		return nil, err

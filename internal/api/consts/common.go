@@ -35,7 +35,7 @@ const VersionCode = "8.4.0"
 // 默认模型
 const (
 	DefaultImageModel = "jimeng-4.0"
-	DefaultVideoModel = "jimeng-video-3.0"
+	DefaultVideoModel = "jimeng-video-3.5-pro"
 )
 
 // 草稿版本
@@ -67,8 +67,30 @@ var ImageModelMapUS = map[string]string{
 	"nanobananapro": "dreamina_image_lib_1",
 }
 
-// 视频模型映射
+// 视频模型映射 - 国内站 (CN)
 var VideoModelMap = map[string]string{
+	"jimeng-video-4.0-pro":  "dreamina_seedance_40_pro",
+	"jimeng-video-4.0":      "dreamina_seedance_40",
+	"jimeng-video-3.5-pro":  "dreamina_ic_generate_video_model_vgfm_3.5_pro",
+	"jimeng-video-3.0-pro":  "dreamina_ic_generate_video_model_vgfm_3.0_pro",
+	"jimeng-video-3.0":      "dreamina_ic_generate_video_model_vgfm_3.0",
+	"jimeng-video-3.0-fast": "dreamina_ic_generate_video_model_vgfm_3.0_fast",
+	"jimeng-video-2.0":      "dreamina_ic_generate_video_model_vgfm_lite",
+	"jimeng-video-2.0-pro":  "dreamina_ic_generate_video_model_vgfm1.0",
+}
+
+// 视频模型映射 - 美国站 (US) - 仅保留 3.0 和 3.5-pro
+var VideoModelMapUS = map[string]string{
+	"jimeng-video-3.5-pro": "dreamina_ic_generate_video_model_vgfm_3.5_pro",
+	"jimeng-video-3.0":     "dreamina_ic_generate_video_model_vgfm_3.0",
+}
+
+// 视频模型映射 - 亚洲国际站 (HK/JP/SG)
+var VideoModelMapAsia = map[string]string{
+	"jimeng-video-veo3":     "dreamina_veo3_generate_video",
+	"jimeng-video-veo3.1":   "dreamina_veo3.1_generate_video",
+	"jimeng-video-sora2":    "dreamina_sora2_generate_video",
+	"jimeng-video-3.5-pro":  "dreamina_ic_generate_video_model_vgfm_3.5_pro",
 	"jimeng-video-3.0-pro":  "dreamina_ic_generate_video_model_vgfm_3.0_pro",
 	"jimeng-video-3.0":      "dreamina_ic_generate_video_model_vgfm_3.0",
 	"jimeng-video-3.0-fast": "dreamina_ic_generate_video_model_vgfm_3.0_fast",

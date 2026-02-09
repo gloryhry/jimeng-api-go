@@ -240,16 +240,62 @@ func sanitizeURL(url string) string {
 
 // ExtractVideoUrl 从响应数据中提取视频 URL
 func ExtractVideoUrl(data interface{}) string {
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		// 检查 video_url
-		if videoURL, ok := dataMap["video_url"].(string); ok {
-			return videoURL
-		}
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return ""
+	}
 
-		// 检查 video 对象
-		if video, ok := dataMap["video"].(map[string]interface{}); ok {
-			if url, ok := video["url"].(string); ok {
+	// 检查顶层 video_url
+	if videoURL, ok := dataMap["video_url"].(string); ok && videoURL != "" {
+		return videoURL
+	}
+
+	// 检查 video 对象
+	video, ok := dataMap["video"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	// 优先尝试 transcoded_video.origin.video_url
+	if transcodedVideo, ok := video["transcoded_video"].(map[string]interface{}); ok {
+		if origin, ok := transcodedVideo["origin"].(map[string]interface{}); ok {
+			if url, ok := origin["video_url"].(string); ok && url != "" {
 				return url
+			}
+		}
+	}
+
+	// 尝试 play_url
+	if url, ok := video["play_url"].(string); ok && url != "" {
+		return url
+	}
+
+	// 尝试 download_url
+	if url, ok := video["download_url"].(string); ok && url != "" {
+		return url
+	}
+
+	// 尝试 url
+	if url, ok := video["url"].(string); ok && url != "" {
+		return url
+	}
+
+	// 尝试 video_list.video_1.main_url (base64 编码)
+	if videoList, ok := video["video_list"].(map[string]interface{}); ok {
+		if video1, ok := videoList["video_1"].(map[string]interface{}); ok {
+			if mainURL, ok := video1["main_url"].(string); ok && mainURL != "" {
+				// main_url 是 base64 编码的，需要解码
+				decoded, err := base64.StdEncoding.DecodeString(mainURL)
+				if err == nil && len(decoded) > 0 {
+					return string(decoded)
+				}
+			}
+			// 备用 URL
+			if backupURL, ok := video1["backup_url_1"].(string); ok && backupURL != "" {
+				decoded, err := base64.StdEncoding.DecodeString(backupURL)
+				if err == nil && len(decoded) > 0 {
+					return string(decoded)
+				}
 			}
 		}
 	}
