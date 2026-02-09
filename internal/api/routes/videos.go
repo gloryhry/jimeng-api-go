@@ -11,7 +11,7 @@ import (
 
 // RegisterVideoRoutes 注册视频接口
 func RegisterVideoRoutes(v1 *gin.RouterGroup) {
-	v1.POST("/videos/generations", handleVideoGeneration)
+	v1.POST("/video/generations", handleVideoGeneration)
 }
 
 func handleVideoGeneration(c *gin.Context) {
