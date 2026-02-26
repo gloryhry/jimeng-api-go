@@ -3,7 +3,6 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -232,7 +231,16 @@ func SubmitImageComposition(model string, prompt string, images []interface{}, o
 		MetricsExtra: metricsExtra,
 	})
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
+	// 添加区域 Referer
+	imageReferer := "https://dreamina.capcut.com/ai-tool/generate?type=image"
+	if !region.IsInternational {
+		imageReferer = "https://jimeng.jianying.com/ai-tool/generate?type=image"
+	}
+
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{
+		Body:    requestData,
+		Headers: map[string]string{"Referer": imageReferer},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -314,7 +322,16 @@ func submitImagesInternal(mappedModel, requestedModel, prompt string, opts *Imag
 		AssistantID:  GetAssistantID(region),
 	})
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
+	// 添加区域 Referer
+	imageReferer := "https://dreamina.capcut.com/ai-tool/generate?type=image"
+	if !region.IsInternational {
+		imageReferer = "https://jimeng.jianying.com/ai-tool/generate?type=image"
+	}
+
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{
+		Body:    requestData,
+		Headers: map[string]string{"Referer": imageReferer},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -398,7 +415,16 @@ func submitJimeng40MultiImages(mappedModel, requestedModel, prompt string, opts 
 		AssistantID:  GetAssistantID(region),
 	})
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: requestData})
+	// 添加区域 Referer
+	imageReferer := "https://dreamina.capcut.com/ai-tool/generate?type=image"
+	if !region.IsInternational {
+		imageReferer = "https://jimeng.jianying.com/ai-tool/generate?type=image"
+	}
+
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{
+		Body:    requestData,
+		Headers: map[string]string{"Referer": imageReferer},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -526,15 +552,23 @@ func pollHistory(historyID, refreshToken string, pollOptions *poller.PollingOpti
 }
 
 func randomSeed() int64 {
-	return int64(math.Floor(rand.Float64()*100000000) + 2500000000)
+	return rand.Int63n(4294967296)
 }
 
 func uploadImageSource(exec uploader.RequestFunc, image interface{}, refreshToken string, region *RegionInfo) (string, error) {
 	switch value := image.(type) {
 	case []byte:
-		return uploader.UploadImageBuffer(exec, value, refreshToken, region)
+		result, err := uploader.UploadImageBuffer(exec, value, refreshToken, region)
+		if err != nil {
+			return "", err
+		}
+		return result.URI, nil
 	case string:
-		return uploader.UploadImageFromURL(exec, value, refreshToken, region)
+		result, err := uploader.UploadImageFromURL(exec, value, refreshToken, region)
+		if err != nil {
+			return "", err
+		}
+		return result.URI, nil
 	default:
 		return "", fmt.Errorf("不支持的图片输入类型: %T", image)
 	}

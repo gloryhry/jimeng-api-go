@@ -31,15 +31,23 @@ type RequestOptions struct {
 	NoDefaultParams bool
 }
 
+// ImageUploadResult 图片上传结果（包含元数据）
+type ImageUploadResult struct {
+	URI    string
+	Width  int
+	Height int
+	Format string
+}
+
 // UploadImageBuffer 上传图片缓冲区到 ImageX
 func UploadImageBuffer(
 	requestFn RequestFunc,
 	imageBuffer []byte,
 	refreshToken string,
 	regionInfo *utils.RegionInfo,
-) (string, error) {
+) (*ImageUploadResult, error) {
 	if requestFn == nil {
-		return "", errors.ErrFileUploadFailed("request 函数未提供")
+		return nil, errors.ErrFileUploadFailed("request 函数未提供")
 	}
 
 	logger.Info("开始上传图片 Buffer 到 ImageX")
@@ -50,7 +58,7 @@ func UploadImageBuffer(
 		},
 	})
 	if err != nil {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("获取上传令牌失败: %v", err))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("获取上传令牌失败: %v", err))
 	}
 
 	accessKey := toString(uploadToken["access_key_id"])
@@ -67,7 +75,7 @@ func UploadImageBuffer(
 	}
 
 	if accessKey == "" || secretKey == "" {
-		return "", errors.ErrFileUploadFailed("上传凭证不完整")
+		return nil, errors.ErrFileUploadFailed("上传凭证不完整")
 	}
 
 	fileSize := len(imageBuffer)
@@ -110,37 +118,37 @@ func UploadImageBuffer(
 	})
 	if err != nil {
 		logger.Error(fmt.Sprintf("申请上传请求失败: %v", err))
-		return "", err
+		return nil, err
 	}
 	logger.Debug(fmt.Sprintf("申请上传响应: %s", string(applyRespBody)))
 
 	applyResult := make(map[string]interface{})
 	if err := json.Unmarshal(applyRespBody, &applyResult); err != nil {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("解析申请上传响应失败: %v", err))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("解析申请上传响应失败: %v", err))
 	}
 
 	if meta := mapValue(applyResult, "ResponseMetadata"); meta != nil {
 		if errInfo := mapValue(meta, "Error"); errInfo != nil {
-			return "", errors.ErrFileUploadFailed(fmt.Sprintf("申请上传失败: %v", errInfo))
+			return nil, errors.ErrFileUploadFailed(fmt.Sprintf("申请上传失败: %v", errInfo))
 		}
 	}
 
 	result := mapValue(applyResult, "Result")
 	if result == nil {
-		return "", errors.ErrFileUploadFailed("申请上传结果为空")
+		return nil, errors.ErrFileUploadFailed("申请上传结果为空")
 	}
 	uploadAddress := mapValue(result, "UploadAddress")
 	if uploadAddress == nil {
-		return "", errors.ErrFileUploadFailed("缺少上传地址信息")
+		return nil, errors.ErrFileUploadFailed("缺少上传地址信息")
 	}
 	storeInfos := sliceValue(uploadAddress["StoreInfos"])
 	if len(storeInfos) == 0 {
-		return "", errors.ErrFileUploadFailed("StoreInfos 为空")
+		return nil, errors.ErrFileUploadFailed("StoreInfos 为空")
 	}
 	storeInfo := mapValue(storeInfos[0], "")
 	uploadHosts := sliceValue(uploadAddress["UploadHosts"])
 	if len(uploadHosts) == 0 {
-		return "", errors.ErrFileUploadFailed("UploadHosts 为空")
+		return nil, errors.ErrFileUploadFailed("UploadHosts 为空")
 	}
 	uploadHost := toString(uploadHosts[0])
 	sessionKey := toString(uploadAddress["SessionKey"])
@@ -148,7 +156,7 @@ func UploadImageBuffer(
 	fileAuth := toString(storeInfo["Auth"])
 
 	if uploadHost == "" || storeURI == "" {
-		return "", errors.ErrFileUploadFailed("上传地址信息不完整")
+		return nil, errors.ErrFileUploadFailed("上传地址信息不完整")
 	}
 
 	uploadURL := fmt.Sprintf("https://%s/upload/v1/%s", uploadHost, storeURI)
@@ -169,7 +177,7 @@ func UploadImageBuffer(
 		Timeout: 60 * time.Second,
 	}); err != nil {
 		logger.Error(fmt.Sprintf("文件上传请求失败: %v", err))
-		return "", err
+		return nil, err
 	}
 
 	commitBody := map[string]interface{}{
@@ -204,29 +212,47 @@ func UploadImageBuffer(
 	})
 	if err != nil {
 		logger.Error(fmt.Sprintf("提交上传请求失败: %v", err))
-		return "", err
+		return nil, err
 	}
 
 	commitResult := make(map[string]interface{})
 	if err := json.Unmarshal(commitResp, &commitResult); err != nil {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("解析提交响应失败: %v", err))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("解析提交响应失败: %v", err))
 	}
 	result = mapValue(commitResult, "Result")
 	if result == nil {
-		return "", errors.ErrFileUploadFailed("提交上传没有返回结果")
+		return nil, errors.ErrFileUploadFailed("提交上传没有返回结果")
 	}
 	results := sliceValue(result["Results"])
 	if len(results) == 0 {
-		return "", errors.ErrFileUploadFailed("提交上传返回空结果")
+		return nil, errors.ErrFileUploadFailed("提交上传返回空结果")
 	}
 	first := mapValue(results[0], "")
 	imageURI := toString(first["Uri"])
 	if imageURI == "" {
-		return "", errors.ErrFileUploadFailed("提交上传未返回 Uri")
+		return nil, errors.ErrFileUploadFailed("提交上传未返回 Uri")
 	}
 
-	logger.Info(fmt.Sprintf("图片上传完成: %s", imageURI))
-	return imageURI, nil
+	// 从 PluginResult 提取图片元信息
+	var imgWidth, imgHeight int
+	var imgFormat string
+	pluginResults := sliceValue(result["PluginResult"])
+	if len(pluginResults) > 0 {
+		plugin := mapValue(pluginResults[0], "")
+		if plugin != nil {
+			imgWidth = int(numberValue(plugin["ImageWidth"]))
+			imgHeight = int(numberValue(plugin["ImageHeight"]))
+			imgFormat = toString(plugin["ImageFormat"])
+		}
+	}
+
+	logger.Info(fmt.Sprintf("图片上传完成: %s (%dx%d, %s)", imageURI, imgWidth, imgHeight, imgFormat))
+	return &ImageUploadResult{
+		URI:    imageURI,
+		Width:  imgWidth,
+		Height: imgHeight,
+		Format: imgFormat,
+	}, nil
 }
 
 // UploadImageFromURL 下载图片并上传
@@ -235,11 +261,11 @@ func UploadImageFromURL(
 	imageURL string,
 	refreshToken string,
 	regionInfo *utils.RegionInfo,
-) (string, error) {
+) (*ImageUploadResult, error) {
 	client := &http.Client{Timeout: 45 * time.Second}
 	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("构建下载请求失败: %v", err))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("构建下载请求失败: %v", err))
 	}
 	req.Header.Set("User-Agent", uploaderUserAgent)
 	req.Header.Set("Accept", "*/*")
@@ -247,15 +273,15 @@ func UploadImageFromURL(
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("下载图片失败: %v", err))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("下载图片失败: %v", err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return "", errors.ErrFileUploadFailed(fmt.Sprintf("下载图片失败: HTTP %d", resp.StatusCode))
+		return nil, errors.ErrFileUploadFailed(fmt.Sprintf("下载图片失败: HTTP %d", resp.StatusCode))
 	}
 	buffer, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	return UploadImageBuffer(requestFn, buffer, refreshToken, regionInfo)
 }
@@ -389,5 +415,17 @@ func toString(v interface{}) string {
 		return value.String()
 	default:
 		return ""
+	}
+}
+
+func numberValue(v interface{}) float64 {
+	switch value := v.(type) {
+	case float64:
+		return value
+	case json.Number:
+		f, _ := value.Float64()
+		return f
+	default:
+		return 0
 	}
 }

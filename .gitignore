@@ -34,9 +34,17 @@ Thumbs.db
 logs/
 *.log
 
+# Media files
+*.jpeg
+*.jpg
+*.mp4
+
 # Temporary files
 tmp/
 temp/
+
+# Scripts
+scripts/
 
 # Config (if contains sensitive data)
 # configs/prod/

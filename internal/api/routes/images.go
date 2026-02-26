@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gloryhry/jimeng-api-go/internal/api/controllers"
+	apiErrors "github.com/gloryhry/jimeng-api-go/internal/pkg/errors"
+	"github.com/gloryhry/jimeng-api-go/internal/pkg/logger"
 	"github.com/gloryhry/jimeng-api-go/internal/pkg/utils"
 )
 
@@ -294,10 +296,13 @@ func formatImageResponse(urls []string, format string, limit *int) ([]map[string
 	format = defaultResponseFormat(format)
 	data := make([]map[string]string, 0, len(urls))
 	if format == "b64_json" {
-		for _, url := range urls {
+		for i, url := range urls {
 			b64, err := utils.FetchFileBASE64(url)
 			if err != nil {
-				return nil, err
+				logger.Error(fmt.Sprintf("下载图片转BASE64失败 (第%d张): %v", i+1, err))
+				return nil, apiErrors.ErrAPIRequestFailed(
+					fmt.Sprintf("下载图片转BASE64失败: %v", err),
+				).SetHTTPStatusCode(502)
 			}
 			data = append(data, map[string]string{"b64_json": b64})
 		}

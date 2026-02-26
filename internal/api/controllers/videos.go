@@ -142,21 +142,21 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 		if buf == nil {
 			continue
 		}
-		id, err := uploader.UploadImageBuffer(exec, buf, refreshToken, region)
+		result, err := uploader.UploadImageBuffer(exec, buf, refreshToken, region)
 		if err != nil {
 			return "", errors.ErrFileUploadFailed(fmt.Sprintf("上传本地图片失败: %v", err))
 		}
-		uploadIDs = append(uploadIDs, id)
+		uploadIDs = append(uploadIDs, result.URI)
 	}
 	for _, path := range opts.FilePaths {
 		if path == "" {
 			continue
 		}
-		id, err := uploader.UploadImageFromURL(exec, path, refreshToken, region)
+		result, err := uploader.UploadImageFromURL(exec, path, refreshToken, region)
 		if err != nil {
 			return "", errors.ErrFileUploadFailed(fmt.Sprintf("上传URL图片失败: %v", err))
 		}
-		uploadIDs = append(uploadIDs, id)
+		uploadIDs = append(uploadIDs, result.URI)
 	}
 
 	var firstFrame, endFrame map[string]interface{}
@@ -187,7 +187,7 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 	genInputs := []map[string]interface{}{genInput}
 
 	componentID := utils.UUID(true)
-	originSubmitID := utils.UUID(true)
+	submitID := utils.UUID(true)
 
 	// 构建 sceneOption
 	sceneOption := map[string]interface{}{
@@ -211,7 +211,7 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 	metrics := mustJSON(map[string]interface{}{
 		"promptSource":   "custom",
 		"isDefaultSeed":  1,
-		"originSubmitId": originSubmitID,
+		"originSubmitId": submitID,
 		"isRegenerate":   false,
 		"enterFrom":      "click",
 		"functionMode":   "first_last_frames",
@@ -284,13 +284,22 @@ func SubmitVideoGeneration(model string, prompt string, opts *VideoOptions, refr
 				},
 			},
 		},
-		"submit_id":        utils.UUID(true),
+		"submit_id":        submitID,
 		"metrics_extra":    metrics,
 		"draft_content":    string(mustJSONBytes(draft)),
 		"http_common_info": map[string]interface{}{"aid": GetAssistantID(region)},
 	}
 
-	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{Body: payload})
+	// 添加区域 Referer
+	videoReferer := "https://dreamina.capcut.com/ai-tool/generate?type=video"
+	if !region.IsInternational {
+		videoReferer = "https://jimeng.jianying.com/ai-tool/generate?type=video"
+	}
+
+	response, err := Request("POST", "/mweb/v1/aigc_draft/generate", refreshToken, &RequestOptions{
+		Body:    payload,
+		Headers: map[string]string{"Referer": videoReferer},
+	})
 	if err != nil {
 		return "", err
 	}

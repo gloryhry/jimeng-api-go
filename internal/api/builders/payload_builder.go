@@ -255,7 +255,7 @@ func BuildMetricsExtra(options BuildMetricsExtraOptions) string {
 		"reportParams": map[string]interface{}{
 			"enterSource":                      "generate",
 			"vipSource":                        "generate",
-			"extraVipFunctionKey":              fmt.Sprintf("%s-%s", options.UserModel, options.ResolutionType),
+			"extraVipFunctionKey":              fmt.Sprintf("%s-%s", options.Model, options.ResolutionType),
 			"useVipFunctionDetailsReporterHoc": true,
 		},
 	}

@@ -88,33 +88,18 @@ func ParseRegionFromToken(token string) *RegionInfo {
 
 // GenerateCookie 构造 Cookie
 func GenerateCookie(refreshToken string) string {
-	regionInfo := ParseRegionFromToken(refreshToken)
 	token := AcquireToken(refreshToken)
-	storeRegion := "cn-gd"
-	switch {
-	case regionInfo.IsUS:
-		storeRegion = "us"
-	case regionInfo.IsHK:
-		storeRegion = "hk"
-	case regionInfo.IsJP:
-		storeRegion = "hk"
-	case regionInfo.IsSG:
-		storeRegion = "hk"
-	}
 	timestamp := utils.UnixTimestamp()
 	sidGuard := fmt.Sprintf("sid_guard=%s%%7C%d%%7C5184000%%7CMon%%2C+03-Feb-2025+08%%3A17%%3A09+GMT", token, timestamp)
 	return strings.Join([]string{
 		fmt.Sprintf("_tea_web_id=%d", WebID),
 		"is_staff_user=false",
-		fmt.Sprintf("store-region=%s", storeRegion),
-		"store-region-src=uid",
 		sidGuard,
 		fmt.Sprintf("uid_tt=%s", UserID),
 		fmt.Sprintf("uid_tt_ss=%s", UserID),
 		fmt.Sprintf("sid_tt=%s", token),
 		fmt.Sprintf("sessionid=%s", token),
 		fmt.Sprintf("sessionid_ss=%s", token),
-		fmt.Sprintf("sid_tt=%s", token),
 	}, "; ")
 }
 
@@ -208,11 +193,31 @@ func Request(method string, uri string, refreshToken string, options *RequestOpt
 	}
 	headers["Origin"] = origin
 	headers["Referer"] = origin
+	headers["App-Sdk-Version"] = "48.0.0"
 	headers["Appid"] = fmt.Sprintf("%d", GetAssistantID(regionInfo))
 	headers["Cookie"] = GenerateCookie(refreshToken)
 	headers["Device-Time"] = fmt.Sprintf("%d", deviceTime)
+	// 根据区域设置 Lan/Loc 头
+	switch {
+	case regionInfo.IsUS:
+		headers["Lan"] = "en"
+		headers["Loc"] = "us"
+	case regionInfo.IsJP:
+		headers["Lan"] = "ja"
+		headers["Loc"] = "jp"
+	case regionInfo.IsHK:
+		headers["Lan"] = "en"
+		headers["Loc"] = "hk"
+	case regionInfo.IsSG:
+		headers["Lan"] = "en"
+		headers["Loc"] = "sg"
+	default:
+		headers["Lan"] = "zh-Hans"
+		headers["Loc"] = "cn"
+	}
 	headers["Sign"] = sign
 	headers["Sign-Ver"] = "1"
+	headers["Tdid"] = ""
 	for k, v := range options.Headers {
 		headers[k] = v
 	}

@@ -144,17 +144,22 @@ func GuessFileExtension(mimeType string) string {
 	}
 }
 
-// FetchFileBASE64 从  URL 获取文件并转换为 BASE64
-func FetchFileBASE64(url string) (string, error) {
-	resp, err := http.Get(url)
+// FetchFileBASE64 从 URL 获取文件并转换为 BASE64
+func FetchFileBASE64(fileURL string) (string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(fileURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("下载文件失败 (%s): %v", fileURL, err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("下载文件失败: HTTP %d (%s)", resp.StatusCode, fileURL)
+	}
+
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("读取文件内容失败 (%s): %v", fileURL, err)
 	}
 
 	return base64.StdEncoding.EncodeToString(data), nil
