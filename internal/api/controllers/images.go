@@ -361,6 +361,9 @@ func PollImageResult(historyID string, refreshToken string, expectedCount int) (
 				len(sliceValue(finalData["item_list"]))),
 		)
 	}
+	if pollResult != nil {
+		logger.Debug(fmt.Sprintf("轮询退出时图片URL: %v (退出原因: %s)", urls, pollResult.ExitReason))
+	}
 	logger.Info(fmt.Sprintf("图像生成完成: %d 张，耗时 %.1fs", len(urls), pollResult.ElapsedTime))
 	return urls, nil
 }
